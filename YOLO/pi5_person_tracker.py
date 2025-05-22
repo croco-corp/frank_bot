@@ -125,39 +125,87 @@ class PersonTracker:
         return largest_idx
 
     def setup_picamera2(self):
-        """Set up PiCamera2 for Camera Module v3"""
+        """Set up PiCamera2 for Camera Module v3 with robust error handling"""
         try:
+            # Initialize Picamera2
             print("Initializing PiCamera2...")
             camera = Picamera2()
             
-            config = camera.create_preview_configuration(
-                main={"size": (640, 480), "format": "RGB888"},
-                buffer_count=4
-            )
-            camera.configure(config)
+            # Get and display camera info
+            try:
+                camera_info = camera.camera_properties
+                print(f"Camera detected: Model {camera_info.get('Model', 'Unknown')}")
+            except:
+                print("Camera detected (properties not accessible)")
             
-            print("Camera configured. Starting...")
+            # Try different configuration approaches
+            configurations_to_try = [
+                # Configuration 1: Still configuration (most reliable)
+                lambda: camera.create_still_configuration(
+                    main={"size": (640, 480), "format": "RGB888"},
+                    buffer_count=4
+                ),
+                # Configuration 2: Video configuration  
+                lambda: camera.create_video_configuration(
+                    main={"size": (640, 480), "format": "RGB888"},
+                    buffer_count=4
+                ),
+                # Configuration 3: Preview configuration (fallback)
+                lambda: camera.create_preview_configuration(
+                    main={"size": (640, 480), "format": "RGB888"},
+                    buffer_count=4
+                )
+            ]
+            
+            config = None
+            for i, config_func in enumerate(configurations_to_try):
+                try:
+                    print(f"Trying configuration method {i+1}...")
+                    config = config_func()
+                    camera.configure(config)
+                    print(f"Configuration {i+1} successful")
+                    break
+                except Exception as e:
+                    print(f"Configuration {i+1} failed: {e}")
+                    continue
+            
+            if config is None:
+                raise Exception("All configuration methods failed")
+            
+            print("Starting camera...")
             camera.start()
-            print("Camera started successfully")
             
+            # Wait for camera to stabilize
+            print("Waiting for camera to stabilize...")
+            time.sleep(2)
+            
+            # Test capture
+            try:
+                test_frame = camera.capture_array()
+                print(f"Test capture successful: {test_frame.shape}")
+            except Exception as e:
+                print(f"Warning: Test capture failed: {e}")
+            
+            print("Camera started successfully")
             return camera
+            
         except Exception as e:
             print(f"Error setting up PiCamera2: {e}")
             return None
-    
+
     def track_person(self, video_source: Optional[str] = None):
         """
         Track a single person using YOLOv8 and camera input
-        
-        Args:
-            video_source: Optional path to video file, None uses live camera
+        Enhanced with better camera handling
         """
         cap = None
         camera = None
         
+        # Setup camera 
         if video_source is None:
             print("Setting up camera...")
             
+            # Try PiCamera2 first
             try:
                 camera = self.setup_picamera2()
                 if camera is None:
@@ -167,44 +215,59 @@ class PersonTracker:
                 print(f"PiCamera2 setup failed: {e}")
                 print("Trying fallback methods...")
                 
+                # Try libcamera-vid with v4l2loopback (if available)
                 try:
-                    gst_str = (
-                        "rpicam-vid -t 0 --width 640 --height 480 --framerate 30 "
-                        "--codec mjpeg --inline --nopreview -o - ! "
-                        "fdsrc ! jpegdec ! videoconvert ! appsink"
-                    )
-                    cap = cv2.VideoCapture(gst_str, cv2.CAP_GSTREAMER)
-                    if not cap.isOpened():
-                        raise Exception("GStreamer pipeline failed")
-                    print("Using rpicam-vid with GStreamer")
-                except Exception as e:
-                    print(f"GStreamer method failed: {e}")
+                    print("Trying libcamera-vid method...")
+                    # This creates a virtual video device
+                    subprocess.run([
+                        "libcamera-vid", "--nopreview", "--timeout", "0", 
+                        "--width", "640", "--height", "480", "--framerate", "30",
+                        "--codec", "mjpeg", "--output", "-"
+                    ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     
-                    try:
-                        print("Trying standard camera capture...")
-                        cap = cv2.VideoCapture(0)
-                        if not cap.isOpened():
-                            raise Exception("Could not open default camera")
-                        print("Using standard camera capture")
-                    except Exception as e:
-                        print(f"All camera methods failed: {e}")
-                        return
+                    # Give it a moment to start
+                    time.sleep(2)
+                    
+                    # Try to connect via OpenCV
+                    cap = cv2.VideoCapture(0)
+                    if not cap.isOpened():
+                        raise Exception("Could not connect to libcamera-vid stream")
+                    print("Using libcamera-vid method")
+                    
+                except Exception as e:
+                    print(f"libcamera-vid method failed: {e}")
+                    print("Camera initialization failed. Please check:")
+                    print("1. Camera is properly connected")
+                    print("2. Camera interface is enabled in raspi-config") 
+                    print("3. Try running: libcamera-still --nopreview -o test.jpg")
+                    return
         else:
+            # Use provided video file
             cap = cv2.VideoCapture(video_source)
             if not cap.isOpened():
                 print(f"Error: Could not open video source: {video_source}")
                 return
         
+        # Performance metrics
         frame_count = 0
         start_time = time.time()
         fps = 0
         
         try:
+            print("Starting tracking loop...")
             while True:
+                # Get frame either from PiCamera2 or OpenCV capture
                 if camera is not None:
-                    frame = camera.capture_array()
-                    ret = True
+                    try:
+                        # Get frame from PiCamera2
+                        frame = camera.capture_array()
+                        ret = True
+                    except Exception as e:
+                        print(f"Frame capture error: {e}")
+                        ret = False
+                        frame = None
                 elif cap is not None:
+                    # Get frame from OpenCV capture
                     ret, frame = cap.read()
                 else:
                     print("No camera available")
@@ -214,102 +277,131 @@ class PersonTracker:
                     print("Error: Could not read frame")
                     break
                 
+                # Get frame dimensions
                 frame_height, frame_width = frame.shape[:2]
                 
+                # Process frame with YOLO
                 start_process = time.time()
                 results = self.model(frame, classes=[0])  # Only detect people (class 0)
                 process_time = time.time() - start_process
                 
+                # Extract all person detections
                 person_detections = []
                 
                 for result in results:
                     boxes = result.boxes
-                    for box in boxes:
-                        confidence = float(box.conf[0])
-                        
-                        if confidence > 0.5:
-                            x1, y1, x2, y2 = map(int, box.xyxy[0])
-                            cx, cy = int((x1+x2)/2), int((y1+y2)/2)
-                            box_width = x2 - x1
-                            box_height = y2 - y1
+                    if boxes is not None:
+                        for box in boxes:
+                            confidence = float(box.conf[0])
                             
-                            person_detections.append({
-                                'confidence': confidence,
-                                'box': (x1, y1, x2, y2),
-                                'center': (cx, cy),
-                                'box_width': box_width,
-                                'box_height': box_height
-                            })
+                            # Only consider high-confidence detections
+                            if confidence > 0.5:
+                                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                                cx, cy = int((x1+x2)/2), int((y1+y2)/2)
+                                box_width = x2 - x1
+                                box_height = y2 - y1
+                                
+                                person_detections.append({
+                                    'confidence': confidence,
+                                    'box': (x1, y1, x2, y2),
+                                    'center': (cx, cy),
+                                    'box_width': box_width,
+                                    'box_height': box_height
+                                })
                 
+                # Add FPS counter to frame
                 frame_count += 1
-                if frame_count % 10 == 0:  
+                if frame_count % 10 == 0:  # Update FPS every 10 frames
                     fps = frame_count / (time.time() - start_time)
                 
                 cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), self.font, 0.7, (0, 0, 255), 2)
+                cv2.putText(frame, f"Process: {process_time*1000:.1f}ms", (10, 60), self.font, 0.7, (0, 0, 255), 2)
                 
+                # Process tracking logic (rest of your existing code)
                 if not person_detections:
+                    # No people detected
                     self.tracking_lost_frames += 1
                     cv2.putText(frame, "No person detected", (frame_width//2 - 100, 30), 
                                 self.font, 0.7, (0, 0, 255), 2)
                     
                     if self.tracking_lost_frames > self.MAX_LOST_FRAMES:
-                        self.last_person_center = None  
+                        self.last_person_center = None  # Reset tracking
                 else:
+                    # Select person to track
                     track_idx = self.select_person_to_track(person_detections)
-                    tracked_person = person_detections[track_idx]
-                    
-                    self.tracking_lost_frames = 0
-                    
-                    for i, person in enumerate(person_detections):
-                        x1, y1, x2, y2 = person['box']
-                        cx, cy = person['center']
+                    if track_idx is not None:
+                        tracked_person = person_detections[track_idx]
                         
-                        color = self.tracking_color if i == track_idx else self.other_person_color
-                        thickness = 2 if i == track_idx else 1
+                        # Reset lost frame counter
+                        self.tracking_lost_frames = 0
                         
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+                        # Draw all detected people
+                        for i, person in enumerate(person_detections):
+                            x1, y1, x2, y2 = person['box']
+                            cx, cy = person['center']
+                            
+                            # Use different color for tracked vs other people
+                            color = self.tracking_color if i == track_idx else self.other_person_color
+                            thickness = 2 if i == track_idx else 1
+                            
+                            # Draw bounding box
+                            cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+                            
+                            # Draw center point
+                            cv2.circle(frame, (cx, cy), 5, color, -1)
+                            
+                            # Add confidence label
+                            if i == track_idx:
+                                cv2.putText(frame, f"Tracked: {person['confidence']:.2f}", 
+                                          (x1, y1-10), self.font, 0.5, color, 2)
                         
-                        cv2.circle(frame, (cx, cy), 5, color, -1)
+                        # Update tracking info for the tracked person
+                        tracked_cx, tracked_cy = tracked_person['center']
+                        self.last_person_center = (tracked_cx, tracked_cy)
                         
-                        if i == track_idx:
-                            cv2.putText(frame, f"Tracked: {person['confidence']:.2f}", 
-                                      (x1, y1-10), self.font, 0.5, color, 2)
-                    
-                    tracked_x1, tracked_y1, tracked_x2, tracked_y2 = tracked_person['box']
-                    tracked_cx, tracked_cy = tracked_person['center']
-                    self.last_person_center = (tracked_cx, tracked_cy)
-                    
-                    movement = self.get_movement_suggestion(
-                        tracked_cx, 
-                        frame_width,
-                        tracked_person['box_height'],
-                        frame_height
-                    )
-                    
-                    cv2.putText(frame, movement, (frame_width//2 - 60, frame_height - 20),
-                              self.font, 0.8, (0, 255, 0), 2)
+                        # Get and display movement suggestion
+                        movement = self.get_movement_suggestion(
+                            tracked_cx, 
+                            frame_width,
+                            tracked_person['box_height'],
+                            frame_height
+                        )
+                        
+                        # Display movement suggestion
+                        cv2.putText(frame, movement, (frame_width//2 - 60, frame_height - 20),
+                                  self.font, 0.8, (0, 255, 0), 2)
                 
+                # Display the frame
                 cv2.imshow("Person Tracker", frame)
                 
+                # Check for key press
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     break
                 elif key == ord('r'):
+                    # Reset tracking
                     self.last_person_center = None
                     self.tracking_lost_frames = 0
                     print("Tracking reset")
         
+        except KeyboardInterrupt:
+            print("\nInterrupted by user")
         except Exception as e:
             print(f"Error during tracking: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
+            print("Cleaning up...")
             if cap is not None:
                 cap.release()
             if camera is not None:
-                camera.stop()
-                camera.close()
+                try:
+                    camera.stop()
+                    camera.close()
+                except:
+                    pass
             cv2.destroyAllWindows()
             print(f"Tracking ended. Average FPS: {frame_count/(time.time()-start_time):.1f}")
-
 
 def main():
     # Create person tracker (set use_hailo=True to enable Hailo acceleration)
@@ -317,7 +409,7 @@ def main():
     
     # Export model for Hailo if needed (only do this once)
     # Uncomment this if you need to export the model for Hailo
-    # tracker.export_model_for_hailo()
+    #tracker.export_model_for_hailo()
     
     # Start tracking
     tracker.track_person()

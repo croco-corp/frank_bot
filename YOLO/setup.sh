@@ -36,14 +36,14 @@ if ! groups | grep -q "video"; then
 fi
 
 # Remove old virtual environment if it exists
-if [ -d ".venv" ]; then
-    echo "Removing old virtual environment..."
-    rm -rf .venv
-fi
+#if [ -d ".venv" ]; then
+#    echo "Removing old virtual environment..."
+#    rm -rf .venv
+#fi
 
 # Create virtual environment WITH system-site-packages
-echo "Creating virtual environment with system-site-packages..."
-python3 -m venv --system-site-packages .venv
+#echo "Creating virtual environment with system-site-packages..."
+#python3 -m venv --system-site-packages .venv
 
 # Activate virtual environment
 echo "Activating virtual environment..."
