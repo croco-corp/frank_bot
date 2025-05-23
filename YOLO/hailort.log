@@ -103,3 +103,22 @@
 [2025-05-20 13:17:22.430] [23608] [HailoRT] [info] [queue_elements.cpp:570] [execute_deactivate] enqueue() in element EntryPushQEl0yolov8s/input_layer1 was aborted, got status = HAILO_SHUTDOWN_EVENT_SIGNALED(57)
 [2025-05-20 13:17:22.430] [23608] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element EntryPushQEl0yolov8s/input_layer1 has 0 frames in his Queue on destruction
 [2025-05-20 13:17:22.430] [23608] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl3yolov8s/input_layer1 has 0 frames in his Queue on destruction
+[2025-05-23 23:01:28.089] [971185] [HailoRT] [info] [device.cpp:49] [Device] OS Version: Linux 6.12.25+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.25-1+rpt1 (2025-04-30) aarch64
+[2025-05-23 23:01:28.091] [971185] [HailoRT] [info] [control.cpp:108] [control__parse_identify_results] firmware_version is: 4.20.0
+[2025-05-23 23:01:28.092] [971185] [HailoRT] [warning] [control.cpp:225] [log_detailed_fw_error] Failed to examine user config, as it is not loaded or is not supported by the device.
+[2025-05-23 23:01:28.092] [971185] [HailoRT] [error] [control.cpp:228] [log_detailed_fw_error] Firmware control has failed. Major status: 0x4003003b, Minor status: 0x401a0004
+[2025-05-23 23:01:28.096] [971185] [HailoRT] [error] [control.cpp:233] [log_detailed_fw_error] Firmware major status: CONTROL_PROTOCOL_STATUS_USER_CONFIG_EXAMINE_FAILED
+[2025-05-23 23:01:28.096] [971185] [HailoRT] [error] [control.cpp:240] [log_detailed_fw_error] Firmware minor status: FIRMWARE_CONFIGS_STATUS_USER_CONFIG_NOT_LOADED
+[2025-05-23 23:01:28.096] [971185] [HailoRT] [error] [device_internal.cpp:495] [examine_user_config] CHECK_SUCCESS failed with status=HAILO_FW_CONTROL_FAILURE(18)
+[2025-05-23 23:01:28.096] [971185] [HailoRT] [error] [device_internal.cpp:502] [read_user_config] CHECK_SUCCESS failed with status=HAILO_FW_CONTROL_FAILURE(18) - Failed to examine user config
+[2025-05-23 23:42:07.262] [1020293] [HailoRT] [info] [vdevice.cpp:523] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2025-05-23 23:42:07.274] [1020293] [HailoRT] [info] [device.cpp:49] [Device] OS Version: Linux 6.12.25+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.25-1+rpt1 (2025-04-30) aarch64
+[2025-05-23 23:42:07.275] [1020293] [HailoRT] [info] [control.cpp:108] [control__parse_identify_results] firmware_version is: 4.20.0
+[2025-05-23 23:42:07.275] [1020293] [HailoRT] [info] [vdevice.cpp:651] [create] VDevice Infos: 0001:01:00.0
+[2025-05-23 23:42:07.284] [1020293] [HailoRT] [info] [internal_buffer_manager.cpp:204] [print_execution_results] Planned internal buffer memory: CMA memory 0, user memory 1048576. memory to edge layer usage factor is 1
+[2025-05-23 23:42:07.285] [1020293] [HailoRT] [info] [internal_buffer_manager.cpp:212] [print_execution_results] Default Internal buffer planner executed successfully
+[2025-05-23 23:42:07.296] [1020293] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 20.29879 milliseconds
+[2025-05-23 23:42:07.296] [1020293] [HailoRT] [info] [vdevice.cpp:749] [configure] Configuring HEF on VDevice took 20.959733 milliseconds
+[2025-05-23 23:54:07.286] [1034736] [HailoRT] [info] [device.cpp:49] [Device] OS Version: Linux 6.12.25+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.25-1+rpt1 (2025-04-30) aarch64
+[2025-05-23 23:54:07.287] [1034736] [HailoRT] [info] [control.cpp:108] [control__parse_identify_results] firmware_version is: 4.20.0
+[2025-05-23 23:54:07.288] [1034736] [HailoRT] [info] [control.cpp:108] [control__parse_identify_results] firmware_version is: 4.20.0

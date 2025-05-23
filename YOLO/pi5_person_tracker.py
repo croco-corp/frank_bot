@@ -10,27 +10,33 @@ from picamera2 import Picamera2
 from typing import Optional, Tuple, List
 import threading
 
+try:
+    from hailo_platform import (HEF, Device, VDevice, HailoStreamInterface, 
+                               InferVStreams, ConfigureParams)
+    HAILO_AVAILABLE = True
+    print("Hailo platform imports successful")
+except ImportError:
+    HAILO_AVAILABLE = False
+    print("Hailo platform not available - falling back to CPU/ONNX")
+
 class PersonTracker:
     def __init__(self, use_hailo=True):
-        """
-        Initialize the PersonTracker
+        self.use_hailo = use_hailo and HAILO_AVAILABLE
+        self.hailo_device = None
+        self.hailo_network_group = None
+        self.input_vstream_info = None
+        self.output_vstream_info = None
+        self.input_vstream = None
+        self.output_vstream = None
         
-        Args:
-            use_hailo: Whether to use Hailo acceleration
-        """
-        self.use_hailo = use_hailo
-        
-        if use_hailo:
-            if os.path.exists("yolov8n_hailo.onnx"):
-                print("Loading Hailo-optimized ONNX model")
-                self.model = YOLO("yolov8n_hailo.onnx")
-            else:
-                print("Hailo model not found, using standard model")
-                self.model = YOLO("yolov8n.pt")
+        if self.use_hailo:
+            success = self._setup_hailo_model()
+            if not success:
+                print("Hailo setup failed, falling back to YOLO")
+                self.use_hailo = False
+                self._setup_yolo_model()
         else:
-            self.model = YOLO("yolov8n.pt")
-        
-        self.class_names = self.model.names
+            self._setup_yolo_model()
         
         self.tracked_person_id = None
         self.last_person_center = None
@@ -41,40 +47,170 @@ class PersonTracker:
         self.other_person_color = (0, 165, 255)  
         self.font = cv2.FONT_HERSHEY_SIMPLEX
         
-        print(f"PersonTracker initialized with {'Hailo acceleration' if use_hailo else 'standard CPU processing'}")
+        print(f"PersonTracker initialized with {'Hailo acceleration' if self.use_hailo else 'YOLO CPU processing'}")
     
-    def export_model_for_hailo(self, optimize=True):
-        """Export the model to ONNX format for Hailo acceleration"""
-        self.model.export(format='onnx', imgsz=640)
-        print("Model exported to ONNX format")
+    def _setup_hailo_model(self):
+        hef_path = "yolov8n.hef"
         
-        if optimize and self.use_hailo:
-            # This is a placeholder - you would use Hailo Model Zoo tools here
-            # to optimize the ONNX model for the Hailo device
-            print("Note: For actual Hailo optimization, you need to use Hailo Dataflow Compiler")
-            print("Visit https://hailo.ai/developer-zone/ for the proper tools")
+        if not os.path.exists(hef_path):
+            print(f"HEF file not found: {hef_path}")
+            print("To create HEF file, use Hailo Dataflow Compiler:")
+            print("1. Convert ONNX to HAR: hailo parser onnx yolov8n.onnx")
+            print("2. Optimize: hailo optimize yolov8n.har")
+            print("3. Compile to HEF: hailo compiler yolov8n_optimized.har")
+            return False
+        
+        try:
+            self.hailo_device = Device()
+            
+            hef = HEF(hef_path)
+            
+            configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
+            self.hailo_network_group = VDevice(self.hailo_device).configure(hef, configure_params)[0]
+            
+            self.input_vstream_info = hef.get_input_vstream_infos()[0]
+            self.output_vstream_info = hef.get_output_vstream_infos()
+            
+            self.input_vstream = InferVStreams.create_from_hef(hef, self.input_vstream_info)
+            self.output_vstream = InferVStreams.create_from_hef(hef, self.output_vstream_info)
+            
+            print(f"Hailo model loaded successfully from {hef_path}")
+            print(f"Input shape: {self.input_vstream_info.shape}")
+            print(f"Output streams: {len(self.output_vstream_info)}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error setting up Hailo model: {e}")
+            return False
+    
+    def _setup_yolo_model(self):
+        if os.path.exists("yolov8n.onnx"):
+            print("Loading ONNX model for CPU inference")
+            self.model = YOLO("yolov8n.onnx")
+        else:
+            print("Loading PyTorch model")
+            self.model = YOLO("yolov8n.pt")
+        
+        self.class_names = self.model.names
+    
+    def _preprocess_for_hailo(self, frame):
+        if not self.use_hailo:
+            return frame
+        
+        expected_shape = self.input_vstream_info.shape
+        height, width = expected_shape[1], expected_shape[2]
+        
+        resized = cv2.resize(frame, (width, height))
+        
+        if len(expected_shape) == 4 and expected_shape[3] == 3:
+            resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        
+        preprocessed = resized.astype(np.float32) / 255.0
+        
+        preprocessed = np.expand_dims(preprocessed, axis=0)
+        
+        return preprocessed
+    
+    def _postprocess_hailo_output(self, raw_outputs, original_shape):
+        detections = []
+        
+        try:
+            if len(raw_outputs) == 1:
+                output = raw_outputs[0][0]
+                
+                for detection in output:
+                    if len(detection) >= 6:
+                        x1, y1, x2, y2, conf, cls = detection[:6]
+                        
+                        if int(cls) == 0 and conf > 0.5:
+                            orig_h, orig_w = original_shape[:2]
+                            model_h, model_w = self.input_vstream_info.shape[1:3]
+                            
+                            x1 = int(x1 * orig_w / model_w)
+                            y1 = int(y1 * orig_h / model_h)
+                            x2 = int(x2 * orig_w / model_w)
+                            y2 = int(y2 * orig_h / model_h)
+                            
+                            cx, cy = int((x1+x2)/2), int((y1+y2)/2)
+                            
+                            detections.append({
+                                'confidence': float(conf),
+                                'box': (x1, y1, x2, y2),
+                                'center': (cx, cy),
+                                'box_width': x2 - x1,
+                                'box_height': y2 - y1
+                            })
+            
+            else:
+                print("Multiple output format detected - implement postprocessing")
+                
+        except Exception as e:
+            print(f"Error in Hailo postprocessing: {e}")
+        
+        return detections
+    
+    def _run_hailo_inference(self, frame):
+        if not self.use_hailo:
+            return []
+        
+        try:
+            preprocessed = self._preprocess_for_hailo(frame)
+            
+            with self.hailo_network_group.activate():
+                self.input_vstream.send(preprocessed)
+                
+                raw_outputs = []
+                for output_stream in self.output_vstream:
+                    raw_outputs.append(output_stream.recv())
+            
+            detections = self._postprocess_hailo_output(raw_outputs, frame.shape)
+            
+            return detections
+            
+        except Exception as e:
+            print(f"Error in Hailo inference: {e}")
+            return []
+    
+    def _run_yolo_inference(self, frame):
+        person_detections = []
+        
+        results = self.model(frame, classes=[0])
+        
+        for result in results:
+            boxes = result.boxes
+            if boxes is not None:
+                for box in boxes:
+                    confidence = float(box.conf[0])
+                    
+                    if confidence > 0.5:
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        cx, cy = int((x1+x2)/2), int((y1+y2)/2)
+                        box_width = x2 - x1
+                        box_height = y2 - y1
+                        
+                        person_detections.append({
+                            'confidence': confidence,
+                            'box': (x1, y1, x2, y2),
+                            'center': (cx, cy),
+                            'box_width': box_width,
+                            'box_height': box_height
+                        })
+        
+        return person_detections
+    
+    def detect_persons(self, frame):
+        if self.use_hailo:
+            return self._run_hailo_inference(frame)
+        else:
+            return self._run_yolo_inference(frame)
     
     def get_movement_suggestion(self, cx: int, frame_width: int, box_height: int, frame_height: int) -> str:
-        """
-        Determines movement direction based on person's position
-        
-        Args:
-            cx: x-coordinate of person's center
-            frame_width: width of the frame
-            box_height: height of the person's bounding box
-            frame_height: height of the frame
-            
-        Returns:
-            String with suggested movement
-        """
-        # Calculate distance approximation (based on bounding box size)
         distance_ratio = box_height / frame_height
         
-        # Stop if too close
         if distance_ratio > 0.3:
             return "STOP"
         
-        # Determine horizontal position and suggest movement
         if cx < frame_width * 0.45:
             return "TURN RIGHT"
         elif cx > frame_width * 0.55:
@@ -83,15 +219,6 @@ class PersonTracker:
             return "GO STRAIGHT"
     
     def select_person_to_track(self, person_detections: List[dict]) -> Optional[int]:
-        """
-        Selects which person to track among multiple detections
-        
-        Args:
-            person_detections: List of person detection dictionaries
-            
-        Returns:
-            Index of the person to track or None if no suitable person
-        """
         if not person_detections:
             return None
             
@@ -109,10 +236,9 @@ class PersonTracker:
                     min_distance = dist
                     closest_idx = i
             
-            if min_distance < 100:  # Threshold distance in pixels
+            if min_distance < 100:
                 return closest_idx
         
-
         largest_idx = 0
         largest_area = 0
         
@@ -125,32 +251,25 @@ class PersonTracker:
         return largest_idx
 
     def setup_picamera2(self):
-        """Set up PiCamera2 for Camera Module v3 with robust error handling"""
         try:
-            # Initialize Picamera2
             print("Initializing PiCamera2...")
             camera = Picamera2()
             
-            # Get and display camera info
             try:
                 camera_info = camera.camera_properties
                 print(f"Camera detected: Model {camera_info.get('Model', 'Unknown')}")
             except:
                 print("Camera detected (properties not accessible)")
             
-            # Try different configuration approaches
             configurations_to_try = [
-                # Configuration 1: Still configuration (most reliable)
                 lambda: camera.create_still_configuration(
                     main={"size": (640, 480), "format": "RGB888"},
                     buffer_count=4
                 ),
-                # Configuration 2: Video configuration  
                 lambda: camera.create_video_configuration(
                     main={"size": (640, 480), "format": "RGB888"},
                     buffer_count=4
                 ),
-                # Configuration 3: Preview configuration (fallback)
                 lambda: camera.create_preview_configuration(
                     main={"size": (640, 480), "format": "RGB888"},
                     buffer_count=4
@@ -175,11 +294,9 @@ class PersonTracker:
             print("Starting camera...")
             camera.start()
             
-            # Wait for camera to stabilize
             print("Waiting for camera to stabilize...")
             time.sleep(2)
             
-            # Test capture
             try:
                 test_frame = camera.capture_array()
                 print(f"Test capture successful: {test_frame.shape}")
@@ -194,18 +311,12 @@ class PersonTracker:
             return None
 
     def track_person(self, video_source: Optional[str] = None):
-        """
-        Track a single person using YOLOv8 and camera input
-        Enhanced with better camera handling
-        """
         cap = None
         camera = None
         
-        # Setup camera 
         if video_source is None:
             print("Setting up camera...")
             
-            # Try PiCamera2 first
             try:
                 camera = self.setup_picamera2()
                 if camera is None:
@@ -213,53 +324,26 @@ class PersonTracker:
                 print("Using PiCamera2")
             except Exception as e:
                 print(f"PiCamera2 setup failed: {e}")
-                print("Trying fallback methods...")
-                
-                # Try libcamera-vid with v4l2loopback (if available)
-                try:
-                    print("Trying libcamera-vid method...")
-                    # This creates a virtual video device
-                    subprocess.run([
-                        "libcamera-vid", "--nopreview", "--timeout", "0", 
-                        "--width", "640", "--height", "480", "--framerate", "30",
-                        "--codec", "mjpeg", "--output", "-"
-                    ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    
-                    # Give it a moment to start
-                    time.sleep(2)
-                    
-                    # Try to connect via OpenCV
-                    cap = cv2.VideoCapture(0)
-                    if not cap.isOpened():
-                        raise Exception("Could not connect to libcamera-vid stream")
-                    print("Using libcamera-vid method")
-                    
-                except Exception as e:
-                    print(f"libcamera-vid method failed: {e}")
-                    print("Camera initialization failed. Please check:")
-                    print("1. Camera is properly connected")
-                    print("2. Camera interface is enabled in raspi-config") 
-                    print("3. Try running: libcamera-still --nopreview -o test.jpg")
-                    return
+                print("Camera initialization failed. Please check camera connection.")
+                return
         else:
-            # Use provided video file
             cap = cv2.VideoCapture(video_source)
             if not cap.isOpened():
                 print(f"Error: Could not open video source: {video_source}")
                 return
         
-        # Performance metrics
         frame_count = 0
         start_time = time.time()
         fps = 0
+        total_inference_time = 0
         
         try:
             print("Starting tracking loop...")
+            print(f"Using {'Hailo accelerator' if self.use_hailo else 'CPU inference'}")
+            
             while True:
-                # Get frame either from PiCamera2 or OpenCV capture
                 if camera is not None:
                     try:
-                        # Get frame from PiCamera2
                         frame = camera.capture_array()
                         ret = True
                     except Exception as e:
@@ -267,7 +351,6 @@ class PersonTracker:
                         ret = False
                         frame = None
                 elif cap is not None:
-                    # Get frame from OpenCV capture
                     ret, frame = cap.read()
                 else:
                     print("No camera available")
@@ -277,109 +360,66 @@ class PersonTracker:
                     print("Error: Could not read frame")
                     break
                 
-                # Get frame dimensions
                 frame_height, frame_width = frame.shape[:2]
                 
-                # Process frame with YOLO
-                start_process = time.time()
-                results = self.model(frame, classes=[0])  # Only detect people (class 0)
-                process_time = time.time() - start_process
+                start_inference = time.time()
+                person_detections = self.detect_persons(frame)
+                inference_time = time.time() - start_inference
+                total_inference_time += inference_time
                 
-                # Extract all person detections
-                person_detections = []
-                
-                for result in results:
-                    boxes = result.boxes
-                    if boxes is not None:
-                        for box in boxes:
-                            confidence = float(box.conf[0])
-                            
-                            # Only consider high-confidence detections
-                            if confidence > 0.5:
-                                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                                cx, cy = int((x1+x2)/2), int((y1+y2)/2)
-                                box_width = x2 - x1
-                                box_height = y2 - y1
-                                
-                                person_detections.append({
-                                    'confidence': confidence,
-                                    'box': (x1, y1, x2, y2),
-                                    'center': (cx, cy),
-                                    'box_width': box_width,
-                                    'box_height': box_height
-                                })
-                
-                # Add FPS counter to frame
                 frame_count += 1
-                if frame_count % 10 == 0:  # Update FPS every 10 frames
+                if frame_count % 10 == 0:
                     fps = frame_count / (time.time() - start_time)
+                    avg_inference = (total_inference_time / frame_count) * 1000
                 
                 cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), self.font, 0.7, (0, 0, 255), 2)
-                cv2.putText(frame, f"Process: {process_time*1000:.1f}ms", (10, 60), self.font, 0.7, (0, 0, 255), 2)
+                cv2.putText(frame, f"Inference: {inference_time*1000:.1f}ms", (10, 60), self.font, 0.7, (0, 0, 255), 2)
+                cv2.putText(frame, f"Engine: {'Hailo' if self.use_hailo else 'CPU'}", (10, 90), self.font, 0.7, (255, 0, 0), 2)
                 
-                # Process tracking logic (rest of your existing code)
                 if not person_detections:
-                    # No people detected
                     self.tracking_lost_frames += 1
                     cv2.putText(frame, "No person detected", (frame_width//2 - 100, 30), 
                                 self.font, 0.7, (0, 0, 255), 2)
                     
                     if self.tracking_lost_frames > self.MAX_LOST_FRAMES:
-                        self.last_person_center = None  # Reset tracking
+                        self.last_person_center = None
                 else:
-                    # Select person to track
                     track_idx = self.select_person_to_track(person_detections)
                     if track_idx is not None:
                         tracked_person = person_detections[track_idx]
-                        
-                        # Reset lost frame counter
                         self.tracking_lost_frames = 0
                         
-                        # Draw all detected people
                         for i, person in enumerate(person_detections):
                             x1, y1, x2, y2 = person['box']
                             cx, cy = person['center']
                             
-                            # Use different color for tracked vs other people
                             color = self.tracking_color if i == track_idx else self.other_person_color
                             thickness = 2 if i == track_idx else 1
                             
-                            # Draw bounding box
                             cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-                            
-                            # Draw center point
                             cv2.circle(frame, (cx, cy), 5, color, -1)
                             
-                            # Add confidence label
                             if i == track_idx:
                                 cv2.putText(frame, f"Tracked: {person['confidence']:.2f}", 
                                           (x1, y1-10), self.font, 0.5, color, 2)
                         
-                        # Update tracking info for the tracked person
                         tracked_cx, tracked_cy = tracked_person['center']
                         self.last_person_center = (tracked_cx, tracked_cy)
                         
-                        # Get and display movement suggestion
                         movement = self.get_movement_suggestion(
-                            tracked_cx, 
-                            frame_width,
-                            tracked_person['box_height'],
-                            frame_height
+                            tracked_cx, frame_width,
+                            tracked_person['box_height'], frame_height
                         )
                         
-                        # Display movement suggestion
                         cv2.putText(frame, movement, (frame_width//2 - 60, frame_height - 20),
                                   self.font, 0.8, (0, 255, 0), 2)
                 
-                # Display the frame
                 cv2.imshow("Person Tracker", frame)
                 
-                # Check for key press
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     break
                 elif key == ord('r'):
-                    # Reset tracking
                     self.last_person_center = None
                     self.tracking_lost_frames = 0
                     print("Tracking reset")
@@ -400,21 +440,57 @@ class PersonTracker:
                     camera.close()
                 except:
                     pass
+            if self.use_hailo and self.hailo_network_group:
+                try:
+                    self.hailo_network_group.release()
+                except:
+                    pass
             cv2.destroyAllWindows()
-            print(f"Tracking ended. Average FPS: {frame_count/(time.time()-start_time):.1f}")
+            
+            if frame_count > 0:
+                avg_fps = frame_count/(time.time()-start_time)
+                avg_inference = (total_inference_time / frame_count) * 1000
+                print(f"Session stats - Avg FPS: {avg_fps:.1f}, Avg Inference: {avg_inference:.1f}ms")
+
+    def export_model_to_onnx(self):
+        if hasattr(self, 'model'):
+            print("Exporting YOLO model to ONNX...")
+            self.model.export(format='onnx', imgsz=640)
+            print("ONNX export complete: yolov8n.onnx")
+            print("\nNext steps for Hailo compilation:")
+            print("1. hailo parser onnx yolov8n.onnx --hw-arch hailo8")
+            print("2. hailo optimize yolov8n.har")
+            print("3. hailo compiler yolov8n_optimized.har")
+        else:
+            print("No YOLO model available for export")
+
+    def __del__(self):
+        if self.use_hailo and self.hailo_network_group:
+            try:
+                self.hailo_network_group.release()
+            except:
+                pass
 
 def main():
-    # Create person tracker (set use_hailo=True to enable Hailo acceleration)
-    tracker = PersonTracker(use_hailo=True)  # Set to True when Hailo is properly set up
+    print("Person Tracker with Hailo Acceleration")
+    print("=====================================")
     
-    # Export model for Hailo if needed (only do this once)
-    # Uncomment this if you need to export the model for Hailo
-    #tracker.export_model_for_hailo()
+    hef_exists = os.path.exists("yolov8n.hef")
+    print(f"HEF file available: {hef_exists}")
     
-    # Start tracking
+    if not hef_exists:
+        print("\nTo enable Hailo acceleration:")
+        print("1. Install Hailo Dataflow Compiler")
+        print("2. Export ONNX model (will be done automatically)")
+        print("3. Compile ONNX to HEF using Hailo tools")
+        print("4. Place yolov8n.hef in the same directory\n")
+    
+    tracker = PersonTracker(use_hailo=hef_exists and HAILO_AVAILABLE)
+    
+    if not os.path.exists("yolov8n.onnx"):
+        tracker.export_model_to_onnx()
+    
     tracker.track_person()
-
 
 if __name__ == "__main__":
     main()
-
