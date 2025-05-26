@@ -43,5 +43,5 @@ python hailo_detection_tracker.py --input /dev/video<X>
 
 For additional options, execute:
 ```bash
-python basic_pipelines/detection.py --help
+python hailo_detection_tracker.py --help
 ```
