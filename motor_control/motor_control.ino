@@ -63,7 +63,7 @@ void loop() {
       motorB.setPositive(MotorPinState::Inactive);
       motorB.setNegative(MotorPinState::Inactive);
       break;
-    case Command::GetDistance:
+    case Command::GetSafeDistance:
       long distance = distanceSensor.readDistance();
       if (distance > SAFE_DISTANCE_IN_CM) {
         Serial.print(true);

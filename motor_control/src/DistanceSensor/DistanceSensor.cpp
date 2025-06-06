@@ -1,19 +1,21 @@
 #include "DistanceSensor.h"
+#include <Arduino.h>
 
-DistanceSensor::DistanceSensor() {
-    pinMode(TRIG_PIN, OUTPUT);
-    pinMode(ECHO_PIN, INPUT);
+DistanceSensor::DistanceSensor(uint8_t trigPin, uint8_t echoPin)
+    : _trigPin(trigPin), _echoPin(echoPin) {
+    pinMode(_trigPin, OUTPUT);
+    pinMode(_echoPin, INPUT);
 }
 
 long DistanceSensor::readDistance() {
     long duration, distance;
-    digitalWrite(TRIG_PIN, LOW);
+    digitalWrite(_trigPin, LOW);
     delayMicroseconds(2); 
-    digitalWrite(TRIG_PIN, HIGH);
+    digitalWrite(_trigPin, HIGH);
     delayMicroseconds(10);
-    digitalWrite(TRIG_PIN, LOW);
+    digitalWrite(_trigPin, LOW);
 
-    duration = pulseIn(ECHO_PIN, HIGH);
+    duration = pulseIn(_echoPin, HIGH);
 
     distance = (duration/2) / 29.1;
 
