@@ -122,7 +122,7 @@ def app_callback(pad, info, user_data):
     
     return Gst.PadProbeReturn.OK
 
-if __name__ == "__main__":
-    user_data = user_app_callback_class()
-    app = GStreamerDetectionApp(app_callback, user_data)
-    app.run()
+# if __name__ == "__main__":
+#     user_data = user_app_callback_class()
+#     app = GStreamerDetectionApp(app_callback, user_data)
+#     app.run()

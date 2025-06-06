@@ -5,5 +5,6 @@ enum class Command : uint8_t {
     Right = 'd',
     Backward = 's',
     Left = 'a',
-    Stop = 'z'
+    Stop = 'z',
+    GetDistance = 'x'
 };

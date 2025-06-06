@@ -19,7 +19,3 @@ long DistanceSensor::readDistance() {
 
     return distance;
 }
-
-bool DistanceSensor::isObstacle() {
-    return readDistance() < 10;  // obstacle if closer than 10 cm
-}

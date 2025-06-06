@@ -1,6 +1,7 @@
 #include "src/MotorDriver/MotorDriver.h"
 #include "src/Communication/Command.h"
 #include "src/DistanceSensor/DistanceSensor.h"
+
 #define MOTOR_A_ENABLE_PIN 9
 #define MOTOR_A_POSITIVE_PIN 7
 #define MOTOR_A_NEGATIVE_PIN 8
@@ -11,6 +12,8 @@
 
 #define TRIG_PIN 4
 #define ECHO_PIN 3
+
+#define SAFE_DISTANCE_IN_CM 10
 
 MotorDriver motorA(MOTOR_A_POSITIVE_PIN, MOTOR_A_NEGATIVE_PIN, MOTOR_A_ENABLE_PIN);
 MotorDriver motorB(MOTOR_B_POSITIVE_PIN, MOTOR_B_NEGATIVE_PIN, MOTOR_B_ENABLE_PIN);
@@ -29,9 +32,6 @@ void loop() {
 
   auto incoming = static_cast<Command>(Serial.read());
 
-  if (distanceSensor.isObstacle()){
-    incoming = static_cast<Command>('z')
-  }
   switch (incoming) {
     case Command::Forward:
       motorA.setPositive(MotorPinState::Active);
@@ -62,6 +62,14 @@ void loop() {
       motorA.setNegative(MotorPinState::Inactive);
       motorB.setPositive(MotorPinState::Inactive);
       motorB.setNegative(MotorPinState::Inactive);
+      break;
+    case Command::GetDistance:
+      long distance = distanceSensor.readDistance();
+      if (distance > SAFE_DISTANCE_IN_CM) {
+        Serial.print(true);
+        break;
+      }
+      Serial.print(false);
       break;
   }
 }
