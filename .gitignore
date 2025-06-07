@@ -2,3 +2,4 @@
 .venv/
 yolov8n.pt
 yolov8n.onnx
+.log
