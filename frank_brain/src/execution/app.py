@@ -9,19 +9,20 @@ class App:
         self._is_blocked = False
         self._loop_delay_seconds = loop_delay_seconds
     
-    def _execute_command(self, command: Command) -> None:
+    def _execute_command(self, command: VoiceCommand) -> None:
         match command:
-            case Command.STOP:
+            case VoiceCommand.STOP:
                 self._is_blocked = True
-            case Command.START:
+                self._communicator.send_msg(CommunicatorMessage.STOP)
+            case VoiceCommand.START:
                 self._is_blocked = False
-            case Command.FASTER:
-                self._communicator.send_msg(Message.FASTER)
-            case Command.SLOWER:
-                self._communicator.send_msg(Message.SLOWER)
+            case VoiceCommand.FASTER:
+                self._communicator.send_msg(CommunicatorMessage.FASTER)
+            case VoiceCommand.SLOWER:
+                self._communicator.send_msg(CommunicatorMessage.SLOWER)
     
     def _safe_distance(self) -> bool:
-        response = self._communicator.send_msg_and_get_response(Message.SAFE_DISTANCE)
+        response = self._communicator.send_msg_and_get_response(CommunicatorMessage.SAFE_DISTANCE)
 
         if response == '1':
             return True
@@ -29,9 +30,7 @@ class App:
         return False
     
     def run(self) -> None:
-        self._listener.start()
         listener_pipeline = self._listener.response_pipeline()
-        
         while True:
             if not listener_pipeline.empty():
                 command = listener_pipeline.get(block=False)

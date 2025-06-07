@@ -1,21 +1,13 @@
 from enum import Enum
 from queue import Queue
 
-class Command(Enum):
+class VoiceCommand(Enum):
     STOP =   0
     START =  1
     FASTER = 2
     SLOWER = 3
 
-class Listener:
-    def start(self) -> None:
-        raise NotImplementedError
-    def stop(self) -> None:
-        raise NotImplementedError
-    def response_pipeline(self) -> Queue[Command]:
-        raise NotImplementedError
-
-class Message(Enum):
+class CommunicatorMessage(Enum):
     FORWARD = 'w'
     RIGHT = 'd'
     DOWN = 's'
@@ -24,14 +16,18 @@ class Message(Enum):
     SAFE_DISTANCE = 'x'
     FASTER = 'c'
     SLOWER = 'v'
+    
+class Listener:
+    def response_pipeline(self) -> Queue[VoiceCommand]:
+        raise NotImplementedError
 
 class Navigator:
-    def get_next_step(self) -> Message:
+    def get_next_step(self) -> CommunicatorMessage:
         raise NotImplementedError
 
 class Communicator:
-    def send_msg(self, msg: Message) -> None:
+    def send_msg(self, msg: CommunicatorMessage) -> None:
         raise NotImplementedError
     
-    def send_msg_and_get_response(self, msg: Message) -> str:
-        raise NotImplementedError    
+    def send_msg_and_get_response(self, msg: CommunicatorMessage) -> str:
+        raise NotImplementedError
