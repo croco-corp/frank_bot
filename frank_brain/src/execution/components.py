@@ -14,8 +14,10 @@ class CommunicatorMessage(Enum):
     LEFT = 'a'
     STOP = 'z'
     SAFE_DISTANCE = 'x'
-    FASTER = 'c'
-    SLOWER = 'v'
+    SLOWER = 'c'
+    FASTER = 'v'
+    LIGHT_ON = 'b'
+    LIGHT_OFF = 'n'
     
 class Listener:
     def response_pipeline(self) -> Queue[VoiceCommand]:
@@ -29,5 +31,5 @@ class Communicator:
     def send_msg(self, msg: CommunicatorMessage) -> None:
         raise NotImplementedError
     
-    def send_msg_and_get_response(self, msg: CommunicatorMessage) -> str:
+    def send_msg_and_get_response(self, msg: CommunicatorMessage) -> str | None:
         raise NotImplementedError
