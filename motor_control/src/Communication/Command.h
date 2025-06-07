@@ -6,5 +6,9 @@ enum class Command : uint8_t {
     Backward = 's',
     Left = 'a',
     Stop = 'z',
-    GetSafeDistance = 'x'
+    GetSafeDistance = 'x',
+    Slower = 'c',
+    Faster = 'v',
+    LightOn = 'b',
+    LightOff = 'n'
 };
