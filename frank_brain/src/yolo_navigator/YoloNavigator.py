@@ -28,7 +28,7 @@ class YoloNavigator(Navigator):
         user_data = _user_app_callback_class()
         app = GStreamerDetectionApp(self._app_callback, user_data)
         app.run()
-
+with self._direction_lock:
     def _app_callback(self, pad, info, user_data) -> Gst.PadProbeReturn:
         buffer = info.get_buffer()
         if buffer is None:
@@ -135,4 +135,12 @@ class _user_app_callback_class(app_callback_class):
         
         # State tracking
         self.is_it_active: bool = False
-    
+
+if __name__ == "__main__":
+    navigator = YoloNavigator()
+    navigator_Thread = threading.Thread(target=navigator.start, daemon=True)
+
+    import time
+    while True:
+        print(navigator.get_next_step())
+        time.sleep(1)
