@@ -3,3 +3,6 @@
 yolov8n.pt
 yolov8n.onnx
 .log
+hailort.log
+venv_hailo_rpi5_examples
+__pycache__

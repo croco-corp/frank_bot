@@ -133,12 +133,3 @@ class _user_app_callback_class(app_callback_class):
         
         # State tracking
         self.is_it_active: bool = False
-
-if __name__ == "__main__":
-    navigator = YoloNavigator()
-    navigator_thread = threading.Thread(target=navigator.get_next_step, daemon=True)
-    navigator_thread.start()
-    import time
-    while True:
-        print(navigator.get_next_step())
-        time.sleep(1)
